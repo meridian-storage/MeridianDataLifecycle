@@ -27,10 +27,12 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).parents[2]
+# Major-only index declarations (the jumbo member standard): the built
+# wheel's Requires-Dist carries the developer's declared ranges.
 EXPECTED_REQUIREMENTS = {
-    "meridian-storage-core<2,>=1.0.1",
-    "meridian-storage-query<2,>=1.0.2",
-    "meridian-storage-semantics<3,>=2.0.0",
+    "meridian-storage-core>=1,<2",
+    "meridian-storage-query>=1,<2",
+    "meridian-storage-semantics>=2,<3",
 }
 
 
