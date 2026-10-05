@@ -21,7 +21,7 @@ classifiers = [
 ]
 dependencies = [
   "meridian-storage-core>=1,<2",
-  "meridian-storage-semantics<3,>=2.0.0",
+  "meridian-storage-semantics>=2,<3",
   "meridian-storage-query>=1,<2",
 ]
 

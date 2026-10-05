@@ -128,6 +128,35 @@ def test_build_is_reproducible(distributions: tuple[Path, Path], tmp_path: Path)
     assert _sha256(first_sdist) == _sha256(second_sdist)
 
 
+def _internal_dependency_sources() -> list[str]:
+    """Installable coordinates for the internal dependencies.
+
+    Under jumbo verification the resolved internal records are materialized
+    under deps/<name>/ (the index carries them; the public registry does
+    not), so the wheel+deps install consumes those artifacts directly.
+    In a plain local checkout (no jumbo overlay) the materialized marker is
+    absent and the historical registry route — the versions already
+    resolved into the running environment — still works.
+    """
+    coordinates: list[str] = []
+    for name in (
+        "meridian-storage-core",
+        "meridian-storage-semantics",
+        "meridian-storage-query",
+    ):
+        dep_dir = ROOT / "deps" / name
+        wheels = sorted(dep_dir.glob("*.whl")) if dep_dir.is_dir() else []
+        if wheels:
+            coordinates.append(str(wheels[-1]))
+        elif dep_dir.is_dir():
+            # A materialized source tree (the recorded artifact's source
+            # fallback) installs as a directory.
+            coordinates.append(str(dep_dir))
+        else:
+            coordinates.append(f"{name}=={importlib.metadata.version(name)}")
+    return coordinates
+
+
 def test_wheel_installs_and_imports_outside_source_tree(
     distributions: tuple[Path, Path], tmp_path: Path
 ) -> None:
@@ -143,14 +172,7 @@ def test_wheel_installs_and_imports_outside_source_tree(
             "pip",
             "install",
             str(wheel),
-            *[
-                f"{name}=={importlib.metadata.version(name)}"
-                for name in (
-                    "meridian-storage-core",
-                    "meridian-storage-semantics",
-                    "meridian-storage-query",
-                )
-            ],
+            *_internal_dependency_sources(),
         ],
         cwd=tmp_path,
         check=True,
