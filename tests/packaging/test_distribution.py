@@ -27,10 +27,15 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).parents[2]
+# Major-only index declarations (the jumbo member standard): the built
+# wheel's Requires-Dist carries the developer's declared ranges. The
+# comparison is on parsed requirements: build backends normalize the
+# specifier order (declared >=1,<2 is emitted as <2,>=1), so raw string
+# equality would spuriously fail against the same window.
 EXPECTED_REQUIREMENTS = {
-    "meridian-storage-core<2,>=1.0.1",
-    "meridian-storage-query<2,>=1.0.2",
-    "meridian-storage-semantics<3,>=2.0.0",
+    "meridian-storage-core": ">=1,<2",
+    "meridian-storage-query": ">=1,<2",
+    "meridian-storage-semantics": ">=2,<3",
 }
 
 
@@ -79,7 +84,21 @@ def test_wheel_metadata_and_contents(distributions: tuple[Path, Path]) -> None:
     assert metadata["Version"] == "1.0.3"
     assert metadata["License-Expression"] == "Apache-2.0"
     assert set(metadata["Requires-Python"].split(",")) == {">=3.12", "<3.15"}
-    assert set(metadata.get_all("Requires-Dist", [])) >= EXPECTED_REQUIREMENTS
+    from packaging.requirements import Requirement
+
+    runtime = {
+        Requirement(item).name: Requirement(item).specifier
+        for item in metadata.get_all("Requires-Dist", [])
+        if "extra ==" not in item
+    }
+    expected = {
+        name: Requirement(f"{name}{specifier}").specifier
+        for name, specifier in EXPECTED_REQUIREMENTS.items()
+    }
+    assert expected.items() <= runtime.items(), (
+        f"the wheel's runtime requirements must carry the declared windows: "
+        f"missing {set(expected) - set(runtime)}, got {runtime}"
+    )
     assert "meridian_storage/projection/py.typed" in names
     assert "meridian_storage/projection/testing/outbox_conformance.py" in names
     assert "meridian_storage/projection/compatibility.json" in names
@@ -126,6 +145,35 @@ def test_build_is_reproducible(distributions: tuple[Path, Path], tmp_path: Path)
     assert _sha256(first_sdist) == _sha256(second_sdist)
 
 
+def _internal_dependency_sources() -> list[str]:
+    """Installable coordinates for the internal dependencies.
+
+    Under jumbo verification the resolved internal records are materialized
+    under deps/<name>/ (the index carries them; the public registry does
+    not), so the wheel+deps install consumes those artifacts directly.
+    In a plain local checkout (no jumbo overlay) the materialized marker is
+    absent and the historical registry route — the versions already
+    resolved into the running environment — still works.
+    """
+    coordinates: list[str] = []
+    for name in (
+        "meridian-storage-core",
+        "meridian-storage-semantics",
+        "meridian-storage-query",
+    ):
+        dep_dir = ROOT / "deps" / name
+        wheels = sorted(dep_dir.glob("*.whl")) if dep_dir.is_dir() else []
+        if wheels:
+            coordinates.append(str(wheels[-1]))
+        elif dep_dir.is_dir():
+            # A materialized source tree (the recorded artifact's source
+            # fallback) installs as a directory.
+            coordinates.append(str(dep_dir))
+        else:
+            coordinates.append(f"{name}=={importlib.metadata.version(name)}")
+    return coordinates
+
+
 def test_wheel_installs_and_imports_outside_source_tree(
     distributions: tuple[Path, Path], tmp_path: Path
 ) -> None:
@@ -141,14 +189,7 @@ def test_wheel_installs_and_imports_outside_source_tree(
             "pip",
             "install",
             str(wheel),
-            *[
-                f"{name}=={importlib.metadata.version(name)}"
-                for name in (
-                    "meridian-storage-core",
-                    "meridian-storage-semantics",
-                    "meridian-storage-query",
-                )
-            ],
+            *_internal_dependency_sources(),
         ],
         cwd=tmp_path,
         check=True,
