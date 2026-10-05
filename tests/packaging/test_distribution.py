@@ -28,11 +28,14 @@ import pytest
 
 ROOT = Path(__file__).parents[2]
 # Major-only index declarations (the jumbo member standard): the built
-# wheel's Requires-Dist carries the developer's declared ranges.
+# wheel's Requires-Dist carries the developer's declared ranges. The
+# comparison is on parsed requirements: build backends normalize the
+# specifier order (declared >=1,<2 is emitted as <2,>=1), so raw string
+# equality would spuriously fail against the same window.
 EXPECTED_REQUIREMENTS = {
-    "meridian-storage-core>=1,<2",
-    "meridian-storage-query>=1,<2",
-    "meridian-storage-semantics>=2,<3",
+    "meridian-storage-core": ">=1,<2",
+    "meridian-storage-query": ">=1,<2",
+    "meridian-storage-semantics": ">=2,<3",
 }
 
 
@@ -81,7 +84,21 @@ def test_wheel_metadata_and_contents(distributions: tuple[Path, Path]) -> None:
     assert metadata["Version"] == "1.0.3"
     assert metadata["License-Expression"] == "Apache-2.0"
     assert set(metadata["Requires-Python"].split(",")) == {">=3.12", "<3.15"}
-    assert set(metadata.get_all("Requires-Dist", [])) >= EXPECTED_REQUIREMENTS
+    from packaging.requirements import Requirement
+
+    runtime = {
+        Requirement(item).name: Requirement(item).specifier
+        for item in metadata.get_all("Requires-Dist", [])
+        if "extra ==" not in item
+    }
+    expected = {
+        name: Requirement(f"{name}{specifier}").specifier
+        for name, specifier in EXPECTED_REQUIREMENTS.items()
+    }
+    assert expected.items() <= runtime.items(), (
+        f"the wheel's runtime requirements must carry the declared windows: "
+        f"missing {set(expected) - set(runtime)}, got {runtime}"
+    )
     assert "meridian_storage/projection/py.typed" in names
     assert "meridian_storage/projection/testing/outbox_conformance.py" in names
     assert "meridian_storage/projection/compatibility.json" in names
